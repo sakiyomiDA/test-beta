@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>番号付き画像ブラウザ</title>
+<style>
+  :root{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+  body{margin:0;display:flex;flex-direction:column;height:100vh;overflow:hidden;background:#000}
+
+  /* --- 上部バナー（URLテンプレート） --- */
+  .banner{background:#111;border-bottom:1px solid #333;display:flex;align-items:center;color:#eee}
+  .banner-toggle{cursor:pointer;padding:6px 10px;border-radius:6px;border:1px solid #555;background:#222;color:#eee;margin:6px}
+  .banner-content{flex:1;display:flex;gap:8px;align-items:center;padding:6px}
+  .banner.hidden .banner-content{display:none}
+  .banner.hidden{height:auto;padding:0;border:none}
+  input[type=text]{flex:1;padding:8px;border-radius:6px;border:1px solid #444;background:#222;color:#eee}
+
+  /* --- 画像表示部分 --- */
+  .viewer{flex:1;overflow:hidden;position:relative}
+  #pic{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(1);user-select:none;cursor:grab;}
+  #pic:active{cursor:grabbing;}
+
+  /* --- 下部ツールバー --- */
+  .toolbar-wrapper{background:#111;border-top:1px solid #333;display:flex;justify-content:center;padding:8px}
+  .toolbar{display:flex;gap:8px;align-items:center;background:#222;padding:8px 12px;border-radius:10px}
+  button{padding:8px 12px;border-radius:8px;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
+  button:active{transform:translateY(1px)}
+  input[type=number]{width:80px;text-align:center;padding:6px;border-radius:6px;border:1px solid #555;background:#222;color:#eee}
+
+  .status{font-size:0.85rem;color:#a44;text-align:center;padding:4px}
+</style>
+</head>
+<body>
+
+  <!-- URLテンプレートのバナー -->
+  <div class="banner" id="banner">
+    <button class="banner-toggle" id="toggleBanner">▼</button>
+    <div class="banner-content">
+      <label>URL</label>
+      <input id="template" type="text" value="https://example.com/{n}.jpg">
+    </div>
+  </div>
+
+  <!-- 表示部分（画像またはページ） -->
+  <div class="viewer" id="viewer">
+    <img id="pic" alt="画像プレビュー" style="display:none;">
+    <iframe id="frame" style="display:none; width:100%; height:100%; border:none;"></iframe>
+  </div>
+  <div class="status" id="status"></div>
+
+  <!-- 下部ツールバー -->
+  <div class="toolbar-wrapper">
+    <div class="toolbar">
+      <button id="prev">◀︎</button>
+      <button id="first">1</button>
+      <input id="num" type="number" min="1" value="1">
+      <button id="go">移動</button>
+      <button id="next">▶︎</button>
+      <button id="zoomOut">－</button>
+      <button id="zoomIn">＋</button>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const templateEl = document.getElementById('template');
+  const pic = document.getElementById('pic');
+  const frame = document.getElementById('frame');
+  const viewer = document.getElementById('viewer');
+  const numEl = document.getElementById('num');
+  const prev = document.getElementById('prev');
+  const next = document.getElementById('next');
+  const go = document.getElementById('go');
+  const first = document.getElementById('first');
+  const status = document.getElementById('status');
+  const banner = document.getElementById('banner');
+  const toggleBanner = document.getElementById('toggleBanner');
+  const zoomIn = document.getElementById('zoomIn');
+  const zoomOut = document.getElementById('zoomOut');
+
+  let zoom = 1;
+  const MIN = 1;
+  let offsetX = 0, offsetY = 0;
+  let dragging = false;
+  let startX = 0, startY = 0;
+
+  const savedTemplate = localStorage.getItem('seq_template');
+  const savedNum = localStorage.getItem('seq_number');
+  const savedZoom = localStorage.getItem('seq_zoom');
+  const savedBanner = localStorage.getItem('seq_banner');
+  const savedOffset = JSON.parse(localStorage.getItem('seq_offset')||"{\"x\":0,\"y\":0}");
+
+  if(savedTemplate) templateEl.value = savedTemplate;
+  if(savedNum) numEl.value = savedNum;
+  if(savedZoom) zoom = Number(savedZoom) || 1;
+  if(savedBanner === 'hidden') banner.classList.add('hidden');
+  offsetX = savedOffset.x || 0;
+  offsetY = savedOffset.y || 0;
+
+  function applyTransform(){
+    pic.style.transform = `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px)) scale(${zoom})`;
+  }
+  applyTransform();
+
+  function buildUrl(template, n){ return template.replaceAll('{n}', String(n)); }
+
+  let loadingToken = 0;
+  function updateImage(){
+    const n = Math.max(MIN, Math.floor(Number(numEl.value) || MIN));
+    numEl.value = n;
+
+    const tpl = templateEl.value.trim();
+    if(!tpl.includes('{n}')){
+      status.textContent = 'テンプレートに {n} がありません。';
+      pic.src = '';
+      return;
+    }
+
+    const full = buildUrl(tpl, n);
+    const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(full);
+    const myToken = ++loadingToken;
+
+    if(isImage){
+      frame.style.display = 'none';
+      pic.style.display = 'block';
+      pic.onload = ()=>{ if(myToken===loadingToken) status.textContent = ''; };
+      pic.onerror = ()=>{ if(myToken===loadingToken) status.textContent = '画像が読み込めませんでした。'; };
+      pic.src = full;
+    } else {
+      pic.style.display = 'none';
+      frame.style.display = 'block';
+      frame.src = full;
+      status.textContent = '';
+    }
+
+    localStorage.setItem('seq_template', tpl);
+    localStorage.setItem('seq_number', String(n));
+  }
+prev.onclick = ()=>{ numEl.value = Math.max(MIN, Number(numEl.value)-1); // ダブルクリックで画像ダウンロード
+  pic.addEventListener('dblclick', ()=>{
+    const a = document.createElement('a');
+    a.href = pic.src;
+    a.download = pic.src.split('/').pop();
+    a.click();
+  });
+
+  updateImage(); };
+  next.onclick = ()=>{ numEl.value = Math.max(MIN, Number(numEl.value)+1); updateImage(); };
+  go.onclick = updateImage;
+  first.onclick = ()=>{ numEl.value = MIN; updateImage(); };
+  templateEl.onchange = updateImage;
+
+  // ズーム操作（倍率強化）
+  zoomIn.onclick = ()=>{ zoom *= 1.25; applyTransform(); localStorage.setItem('seq_zoom', zoom); };
+  zoomOut.onclick = ()=>{ zoom /= 1.25; applyTransform(); localStorage.setItem('seq_zoom', zoom); };
+
+  // マウスホイールズーム
+  viewer.addEventListener('wheel', e=>{
+    e.preventDefault();
+    zoom *= e.deltaY < 0 ? 1.15 : 0.87;
+    applyTransform();
+    localStorage.setItem('seq_zoom', zoom);
+  });
+
+  // 画像ドラッグ移動
+  pic.addEventListener('mousedown', e=>{
+    if(e.button !== 1) return; // 中クリックのみ
+    dragging = true;
+    startX = e.clientX - offsetX;
+    startY = e.clientY - offsetY;
+    pic.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('mousemove', e=>{
+    if(!dragging) return;
+    offsetX = e.clientX - startX;
+    offsetY = e.clientY - startY;
+    applyTransform();
+  });
+
+  window.addEventListener('mouseup', ()=>{
+    if(dragging){
+      dragging = false;
+      pic.style.cursor = 'grab';
+      localStorage.setItem('seq_offset', JSON.stringify({x:offsetX,y:offsetY}));
+    }
+  });
+
+  // バナー折りたたみ
+  toggleBanner.onclick = ()=>{
+    toggleBanner.textContent = banner.classList.contains('hidden') ? '▼' : '▲';
+    banner.classList.toggle('hidden');
+    localStorage.setItem('seq_banner', banner.classList.contains('hidden') ? 'hidden' : 'show');
+    toggleBanner.textContent = banner.classList.contains('hidden') ? '▼' : '▲';
+  };
+
+  window.addEventListener('keydown', e=>{
+    if(e.target===templateEl || e.target===numEl) return;
+    if(e.key==='ArrowLeft') prev.click();
+    if(e.key==='ArrowRight') next.click();
+  });
+
+  updateImage();
+})();
+</script>
+</body>
+</html>
+
